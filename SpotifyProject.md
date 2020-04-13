@@ -7,7 +7,7 @@ By: Richard Austyn McLaughlin
 Executive Summary
 -----------------
 
-For my project I wanted to see just how well Spotify does at recommending me new music. Spotify uses machine learning to create new playlists every year to recommend me new music based off of my music tastes. I gathered data from my playlists, explored various audio features of songs, and used Support Vector Machines to predict if the songs fit my taste or not. In my analysis, I found that Spotify does a reasonable job at matching audio features that I might be interested in, but not well enough as I'd like.
+For my project I wanted to see just how well Spotify does at recommending me new music. Spotify uses machine learning to create new playlists every year to recommend me new music based off of my music tastes. I gathered data from my playlists, explored various audio features of songs, and used Support Vector Machines to predict if the songs fit my taste or not. In my analysis, I found that Spotify does a decent job at matching audio features that I might be interested in, but not well enough as I'd like. Out of all of the recommended playlists there may be around 20% of songs that I would save and would possibly fall my top 100 in a given year.
 
 Summary of Learning
 -------------------
@@ -509,4 +509,4 @@ confusionMatrix(prediction_svmradial, test$who)
     ##        'Positive' Class : 1               
     ## 
 
-As shown by the results, the linear and gaussian transformations had the highest accuracy in predicting which group the songs belonged to. With an average of around 80%, there are clear differences in my taste and what Spotify recommends that I should listen to. This could be inproved if I had access to larger playlists of Spotify recommendations for my taste.
+As shown by the results, the gaussian transformation had the highest accuracy in predicting which group the songs belonged to. With an average of around 85%, there are clear differences in my taste and what Spotify recommends that I should listen to. This could be inproved if I had access to larger playlists of Spotify recommendations for my taste.
