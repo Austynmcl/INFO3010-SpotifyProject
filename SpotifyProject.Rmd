@@ -1,0 +1,257 @@
+---
+title: "Does Spotify Provide Me With Quality Recommendations?"
+output: github_document
+ 
+---
+## By: Richard Austyn McLaughlin
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(spotifyr)
+library(caret)
+
+# Set API tokens
+Sys.setenv(SPOTIFY_CLIENT_ID = '93385ca2f75e4a78bc4e3074c52bcedc')
+Sys.setenv(SPOTIFY_CLIENT_SECRET = 'be61cf2e4b71471aad4cac7f3b1b378b')
+access_token <- get_spotify_access_token()
+```
+
+## Executive Summary
+For my project I wanted to see just how well Spotify does at recommending me new music. Spotify uses machine learning to create new playlists every year to recommend me new music based off of my music tastes. I gathered data from my playlists, explored various audio features of songs, and used Support Vector Machines to predict if the songs fit my taste or not. In my analysis, I found that Spotify does a reasonable job at matching audio features that I might be interested in, but not well enough as I'd like. 
+
+## Summary of Learning
+I have learned a lot from this project. Namely, pulling data from an API, joining different tables to get a more complete dataset, and how to explore and apply models to that data. I had many challenges in gathering the data I wanted to use. First, there was issues with gathering every song on each playlist I wanted to use because Spotify's API limits you to only gather information about 100 songs at once, and then I needed to find a way to get all the songs for all of the playlists I wanted to use. I wanted to be able to use my music taste, but I had to first define songs that defined my taste. I found that Spotify's data was remarkably tidy and had many audio features that describe each song. I have listened to Spotify for over 6 years now and have a personal connection to the app as it has been my home for all things music.
+
+## Dataset
+My dataset comes directly from my Spotify playlists, pulled using RCharlie's spotifyR library. Included are 4 playlists of my top 100 tracks from the last four years and three additional playlists with various numbers of recommended songs that Spotify has created for me. Not needing all of the features that Spotify offers through its API, I selected only audio features and the artists, albums, and track names for each track to use for training my model. I also ended up adding a label to describe if the song came from my library or from a Spotify recommendation. I then shuffled all of the data so I could have more mixed data for the models. Below are desciptions of the audio features that aren't self-explanatory.
+
+##### Instrumentalness: This value represents the amount of vocals in the song. The closer it is to 1.0, the more instrumental the song is.
+
+##### Acousticness: This value describes how acoustic a song is. A score of 1.0 means the song is most likely to be an acoustic one.
+
+##### Liveness: This value describes the probability that the song was recorded with a live audience. According to the official documentation "a value above 0.8 provides strong likelihood that the track is live".
+
+##### Speechiness: "Speechiness detects the presence of spoken words in a track". If the speechiness of a song is above 0.66, it is probably made of spoken words, a score between 0.33 and 0.66 is a song that may contain both music and words, and a score below 0.33 means the song does not have any speech.
+
+##### Energy: "(energy) represents a perceptual measure of intensity and activity. Typically, energetic tracks feel fast, loud, and noisy".
+
+##### Danceability: "Danceability describes how suitable a track is for dancing based on a combination of musical elements including tempo, rhythm stability, beat strength, and overall regularity. A value of 0.0 is least danceable and 1.0 is most danceable".
+
+##### Valence: "A measure from 0.0 to 1.0 describing the musical positiveness conveyed by a track. Tracks with high valence sound more positive (e.g. happy, cheerful, euphoric), while tracks with low valence sound more negative (e.g. sad, depressed, angry)".
+
+Below you can see my process for gathering the data.
+```{r}
+# Set my spotify id
+my_id <- '1244052242'
+my_plists <- get_user_playlists(my_id)
+playlistnames <- c(my_plists$name)
+
+# Select only the first 7 playlists, which I sorted on Spotify's app
+jams <- my_plists %>% filter(name %in% playlistnames[1:8])
+
+# Creating containers to hold the songs
+tracks <- data.frame()
+features <- data.frame()
+
+# Iterating through each playlist, gathering 100 songs at once since there is a limit I can gather
+count<-0
+
+for (i in jams$tracks.total) {
+  count <- count + 1
+  offsetamt <- 0
+  
+  while (offsetamt <= i/100) {
+    track_splice_df <- get_playlist_tracks(jams[count,]$id, offset = offsetamt*100)
+    feature_splice_df <- get_track_audio_features(track_splice_df$track.id)
+    tracks <- rbind(tracks, track_splice_df)
+    features <- rbind(features, feature_splice_df)
+    offsetamt <- offsetamt+1
+    if (i/100 == 1) {offsetamt <- 2}
+  }
+  offsetamt <- 0
+}
+
+# Get artist names from nested structure and make into new column
+tracks <- tracks %>% mutate(artist.name = map_chr(track.artists, function(x) x$name[1]))
+
+# Split data into my taste vs spotify recommended
+trackstrain <- tracks[1:400,]
+featurestrain <- features[1:400,]
+trackstest <- tracks[-(1:400),]
+featurestest <- features[-(1:400),]
+
+# Join the tables on track.id for track info and audio features to be seen together
+train <- trackstrain %>%
+  left_join(featurestrain, by=c("track.id" = "id")) %>% tbl_df()
+train$who <- 1
+test <- trackstest %>%
+  left_join(featurestest, by=c("track.id" = "id")) %>% tbl_df()
+test$who <- 2
+```
+
+## Exploratory Data Analysis
+I used my exploratory Data Analysis to dive into what my music taste looks like. The graphs I used are mostly just desciptive and don't apply much to my model.
+```{r}
+# Select features that I am interested in for my model
+my_plist_df <- train %>% select(artist.name, track.album.name, track.name, danceability, energy, loudness, speechiness,
+                   acousticness, instrumentalness, liveness, valence, tempo, duration_ms, who)
+testData <- test %>% select(artist.name, track.album.name, track.name, danceability, energy, loudness, speechiness,
+                   acousticness, instrumentalness, liveness, valence, tempo, duration_ms, who)
+
+# Splitting out each year's top 100 for visualizations
+top100_pl_2016 <- my_plist_df[1:100,]
+top100_pl_2017 <- my_plist_df[101:200,]
+top100_pl_2018 <- my_plist_df[201:300,]
+top100_pl_2019 <- my_plist_df[301:400,]
+
+# Get summary statistics of my music taste
+summary(my_plist_df)
+```
+
+Looking at a broad summary of my top 100 playlists, you can get a good idea that my music taste is quite varied, but to get an even better idea, I plotted each audio feature in a histogram. Let's see how my music taste has changed over the years.
+
+```{r}
+# Tranforming the data so that I can make facets for each audio feature
+my_2016plist_features <- top100_pl_2016 %>% 
+  select(danceability, energy, loudness, speechiness, acousticness, instrumentalness, liveness, valence, tempo) %>%
+  gather()
+my_2017plist_features <- top100_pl_2017 %>% 
+  select(danceability, energy, loudness, speechiness, acousticness, instrumentalness, liveness, valence, tempo) %>%
+  gather()
+my_2018plist_features <- top100_pl_2018 %>% 
+  select(danceability, energy, loudness, speechiness, acousticness, instrumentalness, liveness, valence, tempo) %>%
+  gather()
+my_2019plist_features <- top100_pl_2019 %>% 
+  select(danceability, energy, loudness, speechiness, acousticness, instrumentalness, liveness, valence, tempo) %>%
+  gather()
+my_combined_plist_features <- my_plist_df %>% 
+  select(danceability, energy, loudness, speechiness, acousticness, instrumentalness, liveness, valence, tempo) %>%
+  gather()
+
+ggplot(my_2016plist_features, aes(value)) + 
+  geom_histogram(aes(y=..density..,), color="black", fill="#1DB954", bins=30) + 
+  geom_density(fill="black", alpha=0.3) +
+  theme_dark() +
+  facet_wrap(~key, scales="free")
+ggplot(my_2017plist_features, aes(value)) + 
+  geom_histogram(aes(y=..density..,), color="black", fill="#1DB954", bins=30) + 
+  geom_density(fill="black", alpha=0.3) +
+  theme_dark() +
+  facet_wrap(~key, scales="free")
+ggplot(my_2018plist_features, aes(value)) + 
+  geom_histogram(aes(y=..density..,), color="black", fill="#1DB954", bins=30) + 
+  geom_density(fill="black", alpha=0.3) +
+  theme_dark() +
+  facet_wrap(~key, scales="free")
+ggplot(my_2019plist_features, aes(value)) + 
+  geom_histogram(aes(y=..density..,), color="black", fill="#1DB954", bins=30) + 
+  geom_density(fill="black", alpha=0.3) +
+  theme_dark() +
+  facet_wrap(~key, scales="free")
+ggplot(my_combined_plist_features, aes(value)) + 
+  geom_histogram(aes(y=..density..,), color="black", fill="#1DB954", bins=30) + 
+  geom_density(fill="black", alpha=0.3) +
+  theme_dark() +
+  facet_wrap(~key, scales="free")
+```
+
+It is clear to see that I enjoy music that is louder on average, but over the years I have listened to less energetic and less danceable music, while the other audio feature vary from year to year with no clear trend.
+
+## Models
+ 
+### Preprocessing
+As a preprocessing step, I combined my data, encoded the columns with strings so that the model would have quantitative values to handle since those labels are important to my music taste. I also randomized the order of the rows to mix up the data since it was in order. That way, my training set would have songs that Spotify recommended.
+```{r}
+completeData <- rbind(my_plist_df, testData)
+completeData <- completeData[sample(nrow(completeData)),]
+completeData$who <- as.factor(completeData$who)
+
+completeData
+
+plistArtistFactor <- factor(completeData$artist.name)
+plistArtistEncoded <- as.numeric(plistArtistFactor)
+
+plistAlbumFactor <- factor(completeData$track.album.name)
+plistAlbumEncoded <- as.numeric(plistAlbumFactor)
+
+plistTrackFactor <- factor(completeData$track.name)
+plistTrackEncoded <- as.numeric(plistTrackFactor)
+
+completeData$artist.name <- plistArtistEncoded
+completeData$track.album.name <- plistAlbumEncoded
+completeData$track.name <- plistTrackEncoded
+
+#divide as training and testing
+sample_size <- floor(0.8*nrow(completeData))
+
+#get train data index
+train_ind <- sample(seq_len(nrow(completeData)), size=sample_size)
+
+#generate training and test datasets
+train <- completeData[train_ind,]
+test <- completeData[-train_ind,]
+```
+
+### Cross Validation Method
+I uses a 5-fold Cross Validatoin for my model
+```{r}
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 5,
+                           repeats = 2)
+```
+
+I used three different models to train and test my data. My goal was to have the accuracy be lower. If the accuracy of predicting where the songs come from is high, then there are clear differences in my music taste and what Spotify recommends me, making their recommendations a poor representation of my tastes. I used Support Vector Machine models with a polynomial, linear, and gaussian kernel transformation.
+
+### SVM with Linear Kernel
+```{r}
+
+# linear kernel
+svmlinear <- train(who ~ ., data=train,
+                 method="svmLinear",
+                 trControl=fitControl)
+
+#check the model
+svmlinear
+
+#apply model on the test data
+prediction_svmlinear <- predict(svmlinear,newdata=test)
+
+#evaluate prediction results
+confusionMatrix(prediction_svmlinear, test$who)
+```
+
+### SVM with Polynomial Kernel
+```{r}
+svmpoly <- train(who ~ ., data=train,
+                 method="svmPoly",
+                 trControl=fitControl)
+
+#check the model
+svmpoly
+
+#apply model on the test data
+prediction_svmpoly <- predict(svmpoly,newdata=test)
+
+#evaluate prediction results
+confusionMatrix(prediction_svmpoly, test$who)
+```
+
+### SVM with Gaussian Kernel
+```{r}
+# gaussian kernel
+svmradial <- train(who ~ ., data=train,
+                 method="svmRadial",
+                 trControl=fitControl)
+
+#check the model
+svmradial
+
+
+#apply model on the test data
+prediction_svmradial <- predict(svmradial,newdata=test)
+
+#evaluate prediction results
+confusionMatrix(prediction_svmradial, test$who)
+```
+
+As shown by the results, the linear and gaussian transformations had the highest accuracy in predicting which group the songs belonged to. With an average of around 80%, there are clear differences in my taste and what Spotify recommends that I should listen to. This could be inproved if I had access to larger playlists of Spotify recommendations for my taste.
